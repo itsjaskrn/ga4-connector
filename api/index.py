@@ -1,13 +1,12 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from flask import Flask, request, jsonify, Response
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import RunReportRequest, DateRange, Metric, Dimension
 from google.oauth2 import service_account
 import os, json
 
-app = FastAPI()
+app = Flask(__name__)
 
-# Load GA4 client
+# Load GA4 credentials from Vercel environment variable
 try:
     if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
         creds_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
@@ -22,15 +21,13 @@ except Exception as e:
     print("Error initializing GA4 client:", e)
     client = None
 
+@app.route("/")
+def home():
+    return jsonify({"message": "GA4 MCP Server running on Vercel"})
 
-@app.get("/")
-def root():
-    return {"message": "GA4 MCP Server running on Vercel"}
-
-
-@app.get("/privacy", response_class=HTMLResponse)
-def privacy_policy():
-    return """
+@app.route("/privacy")
+def privacy():
+    return Response("""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -62,21 +59,20 @@ def privacy_policy():
         <p>If you have questions about this Privacy Policy, please contact the developer of this connector.</p>
     </body>
     </html>
-    """
+    """, mimetype="text/html")
 
-
-@app.post("/run_report")
-async def run_report(request: Request):
+@app.route("/run_report", methods=["POST"])
+def run_report():
     if not client:
-        return {"error": "GA4 client not initialized"}
+        return jsonify({"error": "GA4 client not initialized"}), 500
 
     try:
-        body = await request.json()
-        property_id = body.get("propertyId")
-        start_date = body.get("startDate", "7daysAgo")
-        end_date = body.get("endDate", "today")
-        metrics = body.get("metrics", ["sessions"])
-        dimensions = body.get("dimensions", ["date"])
+        data = request.get_json()
+        property_id = data.get("propertyId")
+        start_date = data.get("startDate", "7daysAgo")
+        end_date = data.get("endDate", "today")
+        metrics = data.get("metrics", ["sessions"])
+        dimensions = data.get("dimensions", ["date"])
 
         req = RunReportRequest(
             property=f"properties/{property_id}",
@@ -84,19 +80,19 @@ async def run_report(request: Request):
             metrics=[Metric(name=m) for m in metrics],
             dimensions=[Dimension(name=d) for d in dimensions],
         )
+
         response = client.run_report(req)
+        rows = [
+            [v.value for v in row.dimension_values] +
+            [v.value for v in row.metric_values]
+            for row in response.rows
+        ]
 
-        rows = []
-        for row in response.rows:
-            rows.append(
-                [v.value for v in row.dimension_values] +
-                [v.value for v in row.metric_values]
-            )
-
-        return {
+        return jsonify({
             "header": [d.name for d in req.dimensions] + [m.name for m in req.metrics],
             "rows": rows
-        }
+        })
+
     except Exception as e:
-        print("Error in run_report:", e)
-        return {"error": str(e)}
+        print("Error in /run_report:", e)
+        return jsonify({"error": str(e)}), 500
