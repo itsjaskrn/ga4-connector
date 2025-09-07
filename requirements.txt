@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+google-analytics-data
+google-analytics-admin
+google-auth
+google-auth-oauthlib
